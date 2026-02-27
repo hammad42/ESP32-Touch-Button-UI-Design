@@ -30,7 +30,7 @@ String* targetString = nullptr;
 AppState returnState = HOME;    
 String keyboardLabel = "";      
 
-const char* sets[] = {" ABCDEFGHIJKLMNOPQRSTUVWXYZ<", " abcdefghijklmnopqrstuvwxyz<", " 0123456789!@#$%^&*()_+-=<"};
+const char* sets[] = {" ABCDEFGHIJKLMNOPQRSTUVWXYZ<X", " abcdefghijklmnopqrstuvwxyz<X", " 0123456789!@#$%^&*()_+-=<X"};
 int currentSet = 0;
 int charIdx = 0;
 
@@ -90,16 +90,54 @@ void drawStatusBar() {
 
 void drawHomeScreen() {
   display.setTextSize(1);
-  display.setCursor(0, 25);
-  display.println("SYSTEM READY");
-  display.print("WIFI: "); display.println(wifiPower ? "ON" : "OFF");
   
-  if(WiFi.status() == WL_CONNECTED) {
-    display.println("NET : CONNECTED");
+  // --- ZONE 1: STATUS BAR PROTECTOR ---
+  // We leave Y=0 to Y=12 completely empty for the drawStatusBar() function
+  
+  // --- ZONE 2: CHIP DATA (Y=16) ---
+  display.setCursor(0, 16);
+  display.print("CPU:"); display.print(ESP.getCpuFreqMHz()); display.print("M");
+  display.setCursor(65, 16);
+  display.print("REV:"); display.print(ESP.getChipRevision());
+
+  display.drawFastHLine(0, 26, 128, WHITE);
+
+  // --- ZONE 3: MEMORY TELEMETRY (Y=30) ---
+  uint32_t freeHeap = ESP.getFreeHeap();
+  uint32_t minHeap = ESP.getMinFreeHeap();
+  
+  display.setCursor(0, 30);
+  display.print("HEAP:"); display.print(freeHeap / 1024); display.print("K");
+  
+  // Calculate percentage used and display it as text instead of a bar
+  int usedPct = 100 - ((freeHeap * 100) / ESP.getHeapSize());
+  display.setCursor(65, 30);
+  display.print("USE:"); display.print(usedPct); display.print("%");
+
+  display.setCursor(0, 40);
+  display.print("MIN :"); display.print(minHeap / 1024); display.print("K");
+  display.setCursor(65, 40);
+  display.print("FLS:"); display.print(ESP.getFlashChipSize() / 1024 / 1024); display.print("M");
+
+  display.drawFastHLine(0, 50, 128, WHITE);
+
+  // --- ZONE 4: SYSTEM & UPTIME (Y=54) ---
+  display.setCursor(0, 54);
+  long t = millis() / 1000;
+  int h = t / 3600;
+  int m = (t % 3600) / 60;
+  int s = t % 60;
+  if(h<10) display.print("0"); display.print(h); display.print(":");
+  if(m<10) display.print("0"); display.print(m); display.print(":");
+  if(s<10) display.print("0"); display.print(s);
+
+  // Heartbeat Star
+  if((millis() / 500) % 2 == 0) {
+    display.setCursor(65, 54);
+    display.print("<3");
   }
 
-  display.setCursor(18, 56);
-  display.print("[TOUCH SEL FOR MENU]");
+  // --- BUTTON LOGIC ---
   if (digitalRead(PIN_SELECT) == HIGH) { 
     currentState = MAIN_MENU; 
     while(digitalRead(PIN_SELECT) == HIGH); 
@@ -272,17 +310,31 @@ void drawKeyboard() {
       delay(200);
     }
   }
-  if (digitalRead(PIN_SELECT) == HIGH) {
+if (digitalRead(PIN_SELECT) == HIGH) {
     unsigned long start = millis();
     while(digitalRead(PIN_SELECT) == HIGH); 
     unsigned long dur = millis() - start;
 
-    if (dur > 2500) { currentState = returnState; delay(500); }
-    else if (dur > 800) { if ((*targetString).length() > 0) (*targetString).remove((*targetString).length() - 1); delay(300); }
+    if (dur > 2500) {
+       currentState = returnState; // ENTER/SAVE
+       delay(500); 
+    }
+    else if (dur > 800) { 
+       if ((*targetString).length() > 0) (*targetString).remove((*targetString).length() - 1); 
+       delay(300); 
+    }
     else {
       char selectedChar = activeSet[charIdx];
-      if (selectedChar == '<') { if ((*targetString).length() > 0) (*targetString).remove((*targetString).length() - 1); }
-      else *targetString += selectedChar;
+      if (selectedChar == '<') { 
+        if ((*targetString).length() > 0) (*targetString).remove((*targetString).length() - 1); 
+      } 
+      else if (selectedChar == 'X') { 
+        // --- NEW CANCEL LOGIC ---
+        currentState = WIFI_MENU; // Exit without connecting
+      }
+      else {
+        *targetString += selectedChar;
+      }
       delay(300); 
     }
   }
