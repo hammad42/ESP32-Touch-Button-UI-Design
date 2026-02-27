@@ -168,21 +168,45 @@ void handleWiFiScan() {
 
 void drawWiFiList() {
   display.setCursor(0, 15); display.println("  PICK NETWORK:");
+  
+  // ScannedCount + 1 (for the Back option)
+  int totalOptions = scannedCount + 1;
   int startIdx = (wifiListIdx >= 4) ? wifiListIdx - 3 : 0;
+  
   for (int i = 0; i < 4; i++) {
-    int cur = startIdx + i; if (cur >= scannedCount) break;
+    int cur = startIdx + i; 
+    if (cur >= totalOptions) break;
+
     int y = 25 + (i * 10);
-    if (cur == wifiListIdx) { display.fillRect(0, y-1, 128, 9, WHITE); display.setTextColor(BLACK); }
-    else display.setTextColor(WHITE);
-    display.setCursor(5, y); display.print(WiFi.SSID(cur).substring(0, 15));
+    if (cur == wifiListIdx) { 
+      display.fillRect(0, y-1, 128, 9, WHITE); 
+      display.setTextColor(BLACK); 
+    } else { 
+      display.setTextColor(WHITE); 
+    }
+    
+    display.setCursor(5, y);
+    if (cur == 0) {
+      display.print("<-- BACK");
+    } else {
+      display.print(WiFi.SSID(cur - 1).substring(0, 15));
+    }
   }
   display.setTextColor(WHITE);
-  if (digitalRead(PIN_DOWN) == HIGH) { wifiListIdx = (wifiListIdx + 1) % scannedCount; while(digitalRead(PIN_DOWN) == HIGH); delay(250); }
-  if (digitalRead(PIN_UP) == HIGH)   { wifiListIdx = (wifiListIdx - 1 + scannedCount) % scannedCount; while(digitalRead(PIN_UP) == HIGH); delay(250); }
+  
+  if (digitalRead(PIN_DOWN) == HIGH) { wifiListIdx = (wifiListIdx + 1) % totalOptions; while(digitalRead(PIN_DOWN) == HIGH); delay(250); }
+  if (digitalRead(PIN_UP) == HIGH)   { wifiListIdx = (wifiListIdx - 1 + totalOptions) % totalOptions; while(digitalRead(PIN_UP) == HIGH); delay(250); }
+  
   if (digitalRead(PIN_SELECT) == HIGH) { 
-    selectedSSID = WiFi.SSID(wifiListIdx); 
-    targetString = &password; keyboardLabel = "WIFI PASS"; returnState = CONNECTING;
-    currentState = ENTER_PASS; 
+    if (wifiListIdx == 0) {
+      currentState = WIFI_MENU;
+    } else {
+      selectedSSID = WiFi.SSID(wifiListIdx - 1); 
+      targetString = &password; 
+      keyboardLabel = "WIFI PASS"; 
+      returnState = CONNECTING;
+      currentState = ENTER_PASS; 
+    }
     while(digitalRead(PIN_SELECT) == HIGH); 
     delay(400); 
   }
