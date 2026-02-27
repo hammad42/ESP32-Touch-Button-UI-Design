@@ -13,7 +13,7 @@ const int PIN_DOWN = 18;
 const int PIN_SELECT = 19; 
 
 // --- SYSTEM STATES ---
-enum AppState { HOME, MAIN_MENU, WIFI_MENU, SCANNING, SCAN_WIFI, ENTER_PASS, CONNECTING, BLUETOOTH_MENU, IR_MENU };
+enum AppState { HOME, MAIN_MENU, WIFI_MENU, SCANNING, SCAN_WIFI, ENTER_PASS, CONNECTING, BLUETOOTH_MENU, IR_MENU, WIFI_STATUS };
 AppState currentState = HOME;
 
 // --- GLOBAL VARIABLES ---
@@ -44,6 +44,7 @@ void drawWiFiList();
 void drawKeyboard();
 void handleConnection();
 void drawPlaceholder(const char* title);
+void drawWiFiStatus();
 
 void setup() {
   Serial.begin(115200);
@@ -65,6 +66,7 @@ void loop() {
     case SCAN_WIFI:      drawWiFiList();     break;
     case ENTER_PASS:     drawKeyboard();     break;
     case CONNECTING:     handleConnection(); break;
+    case WIFI_STATUS:    drawWiFiStatus();   break;
     case BLUETOOTH_MENU: drawPlaceholder("BLUETOOTH"); break;
     case IR_MENU:        drawPlaceholder("IR REMOTE"); break;
   }
@@ -89,20 +91,19 @@ void drawStatusBar() {
 void drawHomeScreen() {
   display.setTextSize(1);
   display.setCursor(0, 25);
-  if(WiFi.status() == WL_CONNECTED) {
-    display.println("IP: " + WiFi.localIP().toString());
-    display.print("RSSI: "); display.print(WiFi.RSSI()); display.println(" dBm");
-  } else {
-    display.println("SYSTEM READY");
-    display.print("WIFI: "); display.println(wifiPower ? "ON" : "OFF");
-  }
-  display.setCursor(20, 56);
-  display.print("[TOUCH SEL FOR MENU]");
+  display.println("SYSTEM READY");
+  display.print("WIFI: "); display.println(wifiPower ? "ON" : "OFF");
   
+  if(WiFi.status() == WL_CONNECTED) {
+    display.println("NET : CONNECTED");
+  }
+
+  display.setCursor(18, 56);
+  display.print("[TOUCH SEL FOR MENU]");
   if (digitalRead(PIN_SELECT) == HIGH) { 
     currentState = MAIN_MENU; 
-    while(digitalRead(PIN_SELECT) == HIGH); // Wait for release
-    delay(300); // COOLDOWN
+    while(digitalRead(PIN_SELECT) == HIGH); 
+    delay(300); 
   }
 }
 
@@ -138,23 +139,24 @@ void drawMainMenu() {
 
 void drawWiFiMenu() {
   display.setCursor(0, 15); display.println("   --- WIFI ---");
-  const char* options[] = { wifiPower ? "Power: ON" : "Power: OFF", "Start Scanning", "Back"};
-  for (int i = 0; i < 3; i++) {
-    int y = 28 + (i * 11);
-    if (i == menuIdx) { display.fillRect(0, y-1, 128, 10, WHITE); display.setTextColor(BLACK); }
+  const char* options[] = { wifiPower ? "Power: ON" : "Power: OFF", "Start Scanning", "Connection Status", "Back"};
+  for (int i = 0; i < 4; i++) {
+    int y = 25 + (i * 9);
+    if (i == menuIdx) { display.fillRect(0, y-1, 128, 9, WHITE); display.setTextColor(BLACK); }
     else display.setTextColor(WHITE);
     display.setCursor(5, y); display.println(options[i]);
   }
   display.setTextColor(WHITE);
 
-  if (digitalRead(PIN_DOWN) == HIGH) { menuIdx = (menuIdx + 1) % 3; while(digitalRead(PIN_DOWN) == HIGH); delay(250); }
-  if (digitalRead(PIN_UP) == HIGH)   { menuIdx = (menuIdx - 1 + 3) % 3; while(digitalRead(PIN_UP) == HIGH); delay(250); }
+  if (digitalRead(PIN_DOWN) == HIGH) { menuIdx = (menuIdx + 1) % 4; while(digitalRead(PIN_DOWN) == HIGH); delay(250); }
+  if (digitalRead(PIN_UP) == HIGH)   { menuIdx = (menuIdx - 1 + 4) % 4; while(digitalRead(PIN_UP) == HIGH); delay(250); }
   if (digitalRead(PIN_SELECT) == HIGH) {
     if (menuIdx == 0) { wifiPower = !wifiPower; if(wifiPower) WiFi.mode(WIFI_STA); else WiFi.mode(WIFI_OFF); }
     if (menuIdx == 1 && wifiPower) currentState = SCANNING;
-    if (menuIdx == 2) currentState = MAIN_MENU;
+    if (menuIdx == 2) currentState = WIFI_STATUS; // Moves to the new status screen
+    if (menuIdx == 3) currentState = MAIN_MENU;
     while(digitalRead(PIN_SELECT) == HIGH);
-    delay(300);
+    menuIdx = 0; delay(300);
   }
 }
 
@@ -185,7 +187,29 @@ void drawWiFiList() {
     delay(400); 
   }
 }
+void drawWiFiStatus() {
+  display.setCursor(0, 15);
+  display.println("--- CONN. STATUS ---");
+  
+  if(WiFi.status() == WL_CONNECTED) {
+    display.setCursor(0, 28);
+    display.print("SSID: "); display.println(WiFi.SSID());
+    display.print("IP  : "); display.println(WiFi.localIP().toString());
+    display.print("RSSI: "); display.print(WiFi.RSSI()); display.println(" dBm");
+  } else {
+    display.setCursor(0, 35);
+    display.println("Not Connected");
+  }
 
+  display.setCursor(30, 56);
+  display.print("[SELECT: BACK]");
+  
+  if (digitalRead(PIN_SELECT) == HIGH) {
+    currentState = WIFI_MENU;
+    while(digitalRead(PIN_SELECT) == HIGH);
+    delay(300);
+  }
+}
 void drawKeyboard() {
   if (targetString == nullptr) { currentState = MAIN_MENU; return; }
   const char* activeSet = sets[currentSet];
