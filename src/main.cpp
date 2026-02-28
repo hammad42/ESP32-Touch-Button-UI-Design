@@ -349,6 +349,6 @@ void handleConnection() {
 
 void drawPlaceholder(const char* title) {
   display.setCursor(30, 30); display.print(title);
-  display.setCursor(20, 45); display.print("Module Locked");
+  display.setCursor(20, 45); display.print("Locked ");
   if (digitalRead(PIN_SELECT) == HIGH) { currentState = MAIN_MENU; while(digitalRead(PIN_SELECT) == HIGH); delay(300); }
 }
