@@ -13,7 +13,7 @@ const int PIN_DOWN = 18;
 const int PIN_SELECT = 19; 
 
 // --- SYSTEM STATES ---
-enum AppState { HOME, MAIN_MENU, WIFI_MENU, SCANNING, SCAN_WIFI, ENTER_PASS, CONNECTING, BLUETOOTH_MENU, IR_MENU, WIFI_STATUS };
+enum AppState { HOME, MAIN_MENU, WIFI_MENU, SCANNING, SCAN_WIFI, ENTER_PASS, CONNECTING, BLUETOOTH_MENU, IR_MENU, WIFI_STATUS, SLEEP_MENU };
 AppState currentState = HOME;
 
 // --- GLOBAL VARIABLES ---
@@ -45,6 +45,7 @@ void drawKeyboard();
 void handleConnection();
 void drawPlaceholder(const char* title);
 void drawWiFiStatus();
+void drawSleepMenu();
 
 void setup() {
   Serial.begin(115200);
@@ -69,6 +70,7 @@ void loop() {
     case WIFI_STATUS:    drawWiFiStatus();   break;
     case BLUETOOTH_MENU: drawPlaceholder("BLUETOOTH"); break;
     case IR_MENU:        drawPlaceholder("IR REMOTE"); break;
+    case SLEEP_MENU:     drawSleepMenu();    break;
   }
 
   display.display();
@@ -146,9 +148,9 @@ void drawHomeScreen() {
 }
 
 void drawMainMenu() {
-  const char* options[] = {"1. WiFi Config", "2. Bluetooth", "3. IR Remote", "4. Exit"};
-  for (int i = 0; i < 4; i++) {
-    int y = 18 + (i * 11);
+  const char* options[] = {"1. WiFi", "2. Bluetooth", "3. IR", "4. Sleep", "5. Exit"};
+  for (int i = 0; i < 5; i++) {
+    int y = 15 + (i * 10);
     if (i == menuIdx) { display.fillRect(0, y-1, 128, 10, WHITE); display.setTextColor(BLACK); }
     else display.setTextColor(WHITE);
     display.setCursor(5, y); display.println(options[i]);
@@ -156,12 +158,12 @@ void drawMainMenu() {
   display.setTextColor(WHITE);
 
   if (digitalRead(PIN_DOWN) == HIGH) { 
-    menuIdx = (menuIdx + 1) % 4; 
+    menuIdx = (menuIdx + 1) % 5; 
     while(digitalRead(PIN_DOWN) == HIGH); 
     delay(250); 
   }
   if (digitalRead(PIN_UP) == HIGH) { 
-    menuIdx = (menuIdx - 1 + 4) % 4; 
+    menuIdx = (menuIdx - 1 + 5) % 5; 
     while(digitalRead(PIN_UP) == HIGH); 
     delay(250); 
   }
@@ -169,9 +171,10 @@ void drawMainMenu() {
     if (menuIdx == 0) currentState = WIFI_MENU;
     if (menuIdx == 1) currentState = BLUETOOTH_MENU;
     if (menuIdx == 2) currentState = IR_MENU;
-    if (menuIdx == 3) currentState = HOME;
+    if (menuIdx == 3) currentState = SLEEP_MENU;
+    if (menuIdx == 4) currentState = HOME;
     while(digitalRead(PIN_SELECT) == HIGH);
-    delay(300);
+    menuIdx = 0; delay(300);
   }
 }
 
@@ -351,4 +354,59 @@ void drawPlaceholder(const char* title) {
   display.setCursor(30, 30); display.print(title);
   display.setCursor(20, 45); display.print("Locked ");
   if (digitalRead(PIN_SELECT) == HIGH) { currentState = MAIN_MENU; while(digitalRead(PIN_SELECT) == HIGH); delay(300); }
+}
+
+void drawSleepMenu() {
+  display.setCursor(0, 10); display.println("   --- SLEEP ---");
+  const char* options[] = {"1. Light Sleep", "2. Mod. Sleep", "3. Deep Sleep", "4. Back"};
+  for (int i = 0; i < 4; i++) {
+    int y = 22 + (i * 10);
+    if (i == menuIdx) { display.fillRect(0, y-1, 128, 10, WHITE); display.setTextColor(BLACK); }
+    else display.setTextColor(WHITE);
+    display.setCursor(5, y); display.println(options[i]);
+  }
+  display.setTextColor(WHITE);
+
+  if (digitalRead(PIN_DOWN) == HIGH) { menuIdx = (menuIdx + 1) % 4; while(digitalRead(PIN_DOWN) == HIGH); delay(250); }
+  if (digitalRead(PIN_UP) == HIGH)   { menuIdx = (menuIdx - 1 + 4) % 4; while(digitalRead(PIN_UP) == HIGH); delay(250); }
+  if (digitalRead(PIN_SELECT) == HIGH) {
+    if (menuIdx == 0) {
+      display.clearDisplay(); display.setCursor(30, 30); display.print("Light Sleep"); display.display();
+      delay(1000);
+      gpio_wakeup_enable((gpio_num_t)PIN_SELECT, GPIO_INTR_HIGH_LEVEL);
+      esp_sleep_enable_gpio_wakeup();
+      esp_light_sleep_start();
+      Wire.begin(); // Re-initialize I2C in case it was powered down
+      currentState = HOME;
+    }
+    else if (menuIdx == 1) {
+      display.clearDisplay(); display.setCursor(20, 30); display.print("Modem Sleep"); display.display();
+      delay(1000);
+      
+      // -- MODEM SLEEP CONFIGURATION --
+      WiFi.disconnect();
+      WiFi.mode(WIFI_OFF);
+      btStop(); // Shuts down Bluetooth
+      wifiPower = false;
+      btPower = false;
+
+      display.ssd1306_command(SSD1306_DISPLAYOFF);
+      while(digitalRead(PIN_SELECT) == LOW) { delay(100); }
+      display.ssd1306_command(SSD1306_DISPLAYON);
+      currentState = HOME;
+    }
+    else if (menuIdx == 2) {
+      display.clearDisplay(); display.setCursor(30, 30); display.print("Deep Sleep"); 
+      display.setCursor(15, 45); display.print("Press UP to Wake"); display.display();
+      delay(2000);
+      esp_sleep_enable_ext0_wakeup((gpio_num_t)PIN_UP, 1); // PIN_UP is an RTC GPIO
+      esp_deep_sleep_start();
+    }
+    else if (menuIdx == 3) {
+      currentState = MAIN_MENU;
+    }
+    
+    while(digitalRead(PIN_SELECT) == HIGH);
+    menuIdx = 0; delay(300);
+  }
 }
