@@ -2,6 +2,8 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncTCP.h>
 
 #define SCREEN_WIDTH 128
 #define SCREEN_HEIGHT 64
@@ -12,8 +14,13 @@ const int PIN_UP = 4;
 const int PIN_DOWN = 18;  
 const int PIN_SELECT = 19; 
 
+// --- DUAL CONTROL ---
+bool v_up = false, v_down = false, v_sel = false;
+AsyncWebServer server(80);
+bool serverStarted = false;
+
 // --- SYSTEM STATES ---
-enum AppState { HOME, MAIN_MENU, WIFI_MENU, SCANNING, SCAN_WIFI, ENTER_PASS, CONNECTING, BLUETOOTH_MENU, IR_MENU, WIFI_STATUS, SLEEP_MENU };
+enum AppState { HOME, MAIN_MENU, WIFI_MENU, SCANNING, SCAN_WIFI, ENTER_PASS, CONNECTING, BLUETOOTH_MENU, IR_MENU, WIFI_STATUS, SLEEP_MENU, AP_MODE };
 AppState currentState = HOME;
 
 // --- GLOBAL VARIABLES ---
@@ -46,6 +53,7 @@ void handleConnection();
 void drawPlaceholder(const char* title);
 void drawWiFiStatus();
 void drawSleepMenu();
+void drawAPMode();
 
 void setup() {
   Serial.begin(115200);
@@ -71,20 +79,86 @@ void loop() {
     case BLUETOOTH_MENU: drawPlaceholder("BLUETOOTH"); break;
     case IR_MENU:        drawPlaceholder("IR REMOTE"); break;
     case SLEEP_MENU:     drawSleepMenu();    break;
+    case AP_MODE:        drawAPMode();       break;
   }
 
   display.display();
   delay(20); // Small loop delay for system stability
 }
 
-// ==========================================
-// STABILIZED INPUT LOGIC (The "Cooldown" Fix)
-// ==========================================
+void drawAPMode() {
+  static const char index_html[] PROGMEM = R"rawliteral(
+  <!DOCTYPE HTML><html><head><title>REMOTE</title><meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>body{font-family:Arial;text-align:center;background:#111;color:#0f0;} .btn{background:#222;color:#0f0;border:1px solid #0f0;padding:20px;width:30%;margin:5px;font-weight:bold;border-radius:10px;} .btn:active{background:#0f0;color:#000;} #txt{padding:12px;width:80%;margin-top:20px;background:#000;color:#0f0;border:1px solid #0f0;font-size:18px;}</style>
+  </head><body><h2>REMOTE CONSOLE</h2><button class="btn" onclick="s('up')">UP</button><br><button class="btn" onclick="s('sel')">SELECT</button><br><button class="btn" onclick="s('down')">DOWN</button>
+  <br><input type="text" id="txt" placeholder="Inject Keyboard..."><br><button class="btn" style="width:60%" onclick="st()">SEND TEXT</button>
+  <script>function s(c){fetch('/ctrl?c='+c);} function st(){fetch('/text?v='+encodeURIComponent(document.getElementById('txt').value)); document.getElementById('txt').value='';}</script>
+  </body></html>)rawliteral";
 
+  // --- START LOGIC (Only runs once) ---
+  if (!serverStarted) {
+    WiFi.softAP("SWISS_ARMY_ESP", NULL);
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *r){ r->send(200, "text/html", index_html); });
+    server.on("/ctrl", HTTP_GET, [](AsyncWebServerRequest *r){ 
+      String c = r->getParam("c")->value();
+      if(c=="up") v_up=true; if(c=="down") v_down=true; if(c=="sel") v_sel=true;
+      r->send(200); 
+    });
+    server.on("/text", HTTP_GET, [](AsyncWebServerRequest *r){
+      if(r->hasParam("v") && targetString) *targetString = r->getParam("v")->value();
+      r->send(200);
+    });
+    server.begin();
+    serverStarted = true;
+    wifiPower = true;
+  }
+
+  // --- DISPLAY LOGIC ---
+  display.setCursor(0, 15); display.println("--- REMOTE ACTIVE ---");
+  display.setCursor(0, 28); display.println("SSID: SWISS_ARMY");
+  display.println("IP  : 192.168.4.1");
+  display.print("Clients: "); display.println(WiFi.softAPgetStationNum());
+  
+  display.drawFastHLine(0, 48, 128, WHITE);
+  display.setCursor(0, 52); display.println("UP: BACK (Keep AP)");
+  display.setCursor(0, 60); display.println("DN: STOP AP & EXIT");
+
+  // --- OPTION 1: BACK (Keep AP Running) ---
+  if (digitalRead(PIN_UP) == HIGH || v_up) {
+    v_up = false;
+    currentState = WIFI_MENU; // Exit screen but don't stop server
+    while(digitalRead(PIN_UP) == HIGH); delay(200);
+  }
+
+  // --- OPTION 2: STOP (Kill AP Manually) ---
+  if (digitalRead(PIN_DOWN) == HIGH || v_down) { 
+    v_down = false; 
+    WiFi.softAPdisconnect(true); 
+    server.end(); 
+    serverStarted = false; 
+    wifiPower = false;
+    currentState = WIFI_MENU; 
+    while(digitalRead(PIN_DOWN) == HIGH); delay(300); 
+  }
+  
+  // SELECT serves as a "Refresh/Stay" or you can map it to something else
+  if (v_sel) v_sel = false; 
+}
 void drawStatusBar() {
   if (wifiPower) {
-    if (WiFi.status() == WL_CONNECTED) display.fillRect(115, 1, 8, 8, WHITE); 
-    else display.drawRect(115, 1, 8, 8, WHITE); 
+    wifi_mode_t mode = WiFi.getMode();
+    if (mode == WIFI_AP || mode == WIFI_AP_STA) {
+      // AP mode: draw broadcast/hotspot icon (concentric arcs + dot)
+      display.fillCircle(119, 8, 1, WHITE);               // center dot
+      display.drawCircle(119, 8, 3, WHITE);                // inner arc
+      display.drawCircle(119, 8, 5, WHITE);                // outer arc
+      // Mask bottom half to make it look like upward-radiating arcs
+      display.fillRect(114, 9, 12, 4, BLACK);
+    } else if (WiFi.status() == WL_CONNECTED) {
+      display.fillRect(115, 1, 8, 8, WHITE);              // filled square
+    } else {
+      display.drawRect(115, 1, 8, 8, WHITE);              // empty square
+    }
   }
   if (btPower) { display.setCursor(102, 1); display.print("B"); }
   display.drawFastHLine(0, 11, 128, WHITE);
@@ -94,7 +168,7 @@ void drawHomeScreen() {
   display.setTextSize(1);
   
   // --- ZONE 1: STATUS BAR PROTECTOR ---
-  // We leave Y=0 to Y=12 completely empty for the drawStatusBar() function
+  // (Y=0 to Y=12 is handled by drawStatusBar)
   
   // --- ZONE 2: CHIP DATA (Y=16) ---
   display.setCursor(0, 16);
@@ -111,7 +185,6 @@ void drawHomeScreen() {
   display.setCursor(0, 30);
   display.print("HEAP:"); display.print(freeHeap / 1024); display.print("K");
   
-  // Calculate percentage used and display it as text instead of a bar
   int usedPct = 100 - ((freeHeap * 100) / ESP.getHeapSize());
   display.setCursor(65, 30);
   display.print("USE:"); display.print(usedPct); display.print("%");
@@ -129,18 +202,19 @@ void drawHomeScreen() {
   int h = t / 3600;
   int m = (t % 3600) / 60;
   int s = t % 60;
-  if(h<10) display.print("0"); display.print(h); display.print(":");
-  if(m<10) display.print("0"); display.print(m); display.print(":");
-  if(s<10) display.print("0"); display.print(s);
+  
+  // Professional formatted uptime
+  display.printf("%02d:%02d:%02d", h, m, s);
 
-  // Heartbeat Star
+  // Heartbeat Icon Fix (Uses ASCII code 3 for a real heart symbol)
   if((millis() / 500) % 2 == 0) {
-    display.setCursor(65, 54);
-    display.print("<3");
+    display.setCursor(110, 54); // Moved to the far right of the uptime row
+    display.write(3); 
   }
 
-  // --- BUTTON LOGIC ---
-  if (digitalRead(PIN_SELECT) == HIGH) { 
+  // --- DUAL CONTROL: SELECT (Physical + Virtual) ---
+  if (digitalRead(PIN_SELECT) == HIGH || v_sel) { 
+    v_sel = false; // Reset virtual flag
     currentState = MAIN_MENU; 
     while(digitalRead(PIN_SELECT) == HIGH); 
     delay(300); 
@@ -157,47 +231,114 @@ void drawMainMenu() {
   }
   display.setTextColor(WHITE);
 
-  if (digitalRead(PIN_DOWN) == HIGH) { 
+  // --- DUAL CONTROL: DOWN ---
+  if (digitalRead(PIN_DOWN) == HIGH || v_down) { 
+    v_down = false; // Reset virtual flag immediately
     menuIdx = (menuIdx + 1) % 5; 
     while(digitalRead(PIN_DOWN) == HIGH); 
     delay(250); 
   }
-  if (digitalRead(PIN_UP) == HIGH) { 
+
+  // --- DUAL CONTROL: UP ---
+  if (digitalRead(PIN_UP) == HIGH || v_up) { 
+    v_up = false; // Reset virtual flag immediately
     menuIdx = (menuIdx - 1 + 5) % 5; 
     while(digitalRead(PIN_UP) == HIGH); 
     delay(250); 
   }
-  if (digitalRead(PIN_SELECT) == HIGH) {
+
+  // --- DUAL CONTROL: SELECT ---
+  if (digitalRead(PIN_SELECT) == HIGH || v_sel) {
+    v_sel = false; // Reset virtual flag immediately
     if (menuIdx == 0) currentState = WIFI_MENU;
     if (menuIdx == 1) currentState = BLUETOOTH_MENU;
     if (menuIdx == 2) currentState = IR_MENU;
     if (menuIdx == 3) currentState = SLEEP_MENU;
     if (menuIdx == 4) currentState = HOME;
+    
     while(digitalRead(PIN_SELECT) == HIGH);
-    menuIdx = 0; delay(300);
+    menuIdx = 0; 
+    delay(300);
   }
 }
 
 void drawWiFiMenu() {
-  display.setCursor(0, 15); display.println("   --- WIFI ---");
-  const char* options[] = { wifiPower ? "Power: ON" : "Power: OFF", "Start Scanning", "Connection Status", "Back"};
+  display.setCursor(0, 15); 
+  display.println("   --- WIFI ---");
+
+  // All 6 options are here
+  const char* options[] = { 
+    wifiPower ? "Power: ON" : "Power: OFF", 
+    "Start Scanning", 
+    "Access Point (Remote)", 
+    "Connection Status", 
+    "Back"
+  };
+  int totalOpts = 5;
+
+  // --- SCROLL LOGIC ---
+  // This calculates which 4 items to show based on where the menuIdx is
+  int startIdx = 0;
+  if (menuIdx >= 4) {
+    startIdx = menuIdx - 3; 
+  }
+
   for (int i = 0; i < 4; i++) {
-    int y = 25 + (i * 9);
-    if (i == menuIdx) { display.fillRect(0, y-1, 128, 9, WHITE); display.setTextColor(BLACK); }
-    else display.setTextColor(WHITE);
-    display.setCursor(5, y); display.println(options[i]);
+    int currentItem = startIdx + i;
+    if (currentItem >= totalOpts) break;
+
+    int y = 25 + (i * 10); // Comfortable 10-pixel spacing
+    
+    if (currentItem == menuIdx) {
+      display.fillRect(0, y - 1, 128, 10, WHITE);
+      display.setTextColor(BLACK);
+    } else {
+      display.setTextColor(WHITE);
+    }
+
+    display.setCursor(5, y);
+    display.println(options[currentItem]);
   }
   display.setTextColor(WHITE);
 
-  if (digitalRead(PIN_DOWN) == HIGH) { menuIdx = (menuIdx + 1) % 4; while(digitalRead(PIN_DOWN) == HIGH); delay(250); }
-  if (digitalRead(PIN_UP) == HIGH)   { menuIdx = (menuIdx - 1 + 4) % 4; while(digitalRead(PIN_UP) == HIGH); delay(250); }
-  if (digitalRead(PIN_SELECT) == HIGH) {
-    if (menuIdx == 0) { wifiPower = !wifiPower; if(wifiPower) WiFi.mode(WIFI_STA); else WiFi.mode(WIFI_OFF); }
-    if (menuIdx == 1 && wifiPower) currentState = SCANNING;
-    if (menuIdx == 2) currentState = WIFI_STATUS; // Moves to the new status screen
-    if (menuIdx == 3) currentState = MAIN_MENU;
+  // --- SCROLL INDICATOR (Tiny dots on the right) ---
+  if (totalOpts > 4) {
+    display.drawFastVLine(126, 25, 38, WHITE);
+    int indicatorY = 25 + (menuIdx * 30 / (totalOpts - 1));
+    display.fillRect(125, indicatorY, 3, 5, WHITE);
+  }
+
+  // --- DUAL CONTROL: DOWN ---
+  if (digitalRead(PIN_DOWN) == HIGH || v_down) { 
+    v_down = false; 
+    menuIdx = (menuIdx + 1) % totalOpts; 
+    while(digitalRead(PIN_DOWN) == HIGH); 
+    delay(200); 
+  }
+  
+  // --- DUAL CONTROL: UP ---
+  if (digitalRead(PIN_UP) == HIGH || v_up) { 
+    v_up = false; 
+    menuIdx = (menuIdx - 1 + totalOpts) % totalOpts; 
+    while(digitalRead(PIN_UP) == HIGH); 
+    delay(200); 
+  }
+
+  // --- DUAL CONTROL: SELECT ---
+  if (digitalRead(PIN_SELECT) == HIGH || v_sel) {
+    v_sel = false;
+    if (menuIdx == 0) { 
+      wifiPower = !wifiPower; 
+      if(wifiPower) WiFi.mode(WIFI_STA); else WiFi.mode(WIFI_OFF); 
+    }
+    else if (menuIdx == 1 && wifiPower) currentState = SCANNING;
+    else if (menuIdx == 2) currentState = AP_MODE;     // Access Point / Remote Mode
+    else if (menuIdx == 3) currentState = WIFI_STATUS; // Connection Status
+    else if (menuIdx == 4) currentState = MAIN_MENU;   // Back
+
     while(digitalRead(PIN_SELECT) == HIGH);
-    menuIdx = 0; delay(300);
+    menuIdx = 0; 
+    delay(300);
   }
 }
 
@@ -208,9 +349,8 @@ void handleWiFiScan() {
 }
 
 void drawWiFiList() {
-  display.setCursor(0, 15); display.println("  PICK NETWORK:");
+  display.setCursor(0, 15); display.println("   PICK NETWORK:");
   
-  // ScannedCount + 1 (for the Back option)
   int totalOptions = scannedCount + 1;
   int startIdx = (wifiListIdx >= 4) ? wifiListIdx - 3 : 0;
   
@@ -234,11 +374,26 @@ void drawWiFiList() {
     }
   }
   display.setTextColor(WHITE);
+
+  // --- DUAL CONTROL: DOWN ---
+  if (digitalRead(PIN_DOWN) == HIGH || v_down) { 
+    v_down = false; // Reset virtual flag
+    wifiListIdx = (wifiListIdx + 1) % totalOptions; 
+    while(digitalRead(PIN_DOWN) == HIGH); 
+    delay(200); 
+  }
+
+  // --- DUAL CONTROL: UP ---
+  if (digitalRead(PIN_UP) == HIGH || v_up) { 
+    v_up = false; // Reset virtual flag
+    wifiListIdx = (wifiListIdx - 1 + totalOptions) % totalOptions; 
+    while(digitalRead(PIN_UP) == HIGH); 
+    delay(200); 
+  }
   
-  if (digitalRead(PIN_DOWN) == HIGH) { wifiListIdx = (wifiListIdx + 1) % totalOptions; while(digitalRead(PIN_DOWN) == HIGH); delay(250); }
-  if (digitalRead(PIN_UP) == HIGH)   { wifiListIdx = (wifiListIdx - 1 + totalOptions) % totalOptions; while(digitalRead(PIN_UP) == HIGH); delay(250); }
-  
-  if (digitalRead(PIN_SELECT) == HIGH) { 
+  // --- DUAL CONTROL: SELECT ---
+  if (digitalRead(PIN_SELECT) == HIGH || v_sel) { 
+    v_sel = false; // Reset virtual flag
     if (wifiListIdx == 0) {
       currentState = WIFI_MENU;
     } else {
@@ -256,20 +411,33 @@ void drawWiFiStatus() {
   display.setCursor(0, 15);
   display.println("--- CONN. STATUS ---");
   
+  // --- CASE 1: Connected to a Router (STA Mode) ---
   if(WiFi.status() == WL_CONNECTED) {
     display.setCursor(0, 28);
     display.print("SSID: "); display.println(WiFi.SSID());
     display.print("IP  : "); display.println(WiFi.localIP().toString());
     display.print("RSSI: "); display.print(WiFi.RSSI()); display.println(" dBm");
-  } else {
+  } 
+  // --- CASE 2: Running as an Access Point (AP Mode) ---
+  else if (WiFi.getMode() & WIFI_AP) {
+    display.setCursor(0, 28);
+    display.print("AP SSID: "); display.println("SWISS_ARMY");
+    display.print("AP IP  : "); display.println(WiFi.softAPIP().toString());
+    display.print("Clients: "); display.println(WiFi.softAPgetStationNum());
+  } 
+  // --- CASE 3: No Active Connection ---
+  else {
     display.setCursor(0, 35);
-    display.println("Not Connected");
+    display.println("Status: IDLE");
+    display.println("Radio: OFF");
   }
 
-  display.setCursor(30, 56);
+  display.setCursor(20, 56);
   display.print("[SELECT: BACK]");
   
-  if (digitalRead(PIN_SELECT) == HIGH) {
+  // --- DUAL CONTROL: SELECT (Physical + Virtual) ---
+  if (digitalRead(PIN_SELECT) == HIGH || v_sel) {
+    v_sel = false; // Reset virtual flag
     currentState = WIFI_MENU;
     while(digitalRead(PIN_SELECT) == HIGH);
     delay(300);
