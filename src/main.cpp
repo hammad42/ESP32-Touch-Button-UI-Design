@@ -31,6 +31,7 @@ int scannedCount = 0;
 int wifiListIdx = 0;
 String selectedSSID = "";
 String password = "";
+bool v_submit = false;
 
 // --- KEYBOARD CONTEXT ---
 String* targetString = nullptr; 
@@ -86,15 +87,33 @@ void loop() {
   delay(20); // Small loop delay for system stability
 }
 
-void drawAPMode() {
-  static const char index_html[] PROGMEM = R"rawliteral(
-  <!DOCTYPE HTML><html><head><title>REMOTE</title><meta name="viewport" content="width=device-width, initial-scale=1">
-  <style>body{font-family:Arial;text-align:center;background:#111;color:#0f0;} .btn{background:#222;color:#0f0;border:1px solid #0f0;padding:20px;width:30%;margin:5px;font-weight:bold;border-radius:10px;} .btn:active{background:#0f0;color:#000;} #txt{padding:12px;width:80%;margin-top:20px;background:#000;color:#0f0;border:1px solid #0f0;font-size:18px;}</style>
-  </head><body><h2>REMOTE CONSOLE</h2><button class="btn" onclick="s('up')">UP</button><br><button class="btn" onclick="s('sel')">SELECT</button><br><button class="btn" onclick="s('down')">DOWN</button>
-  <br><input type="text" id="txt" placeholder="Inject Keyboard..."><br><button class="btn" style="width:60%" onclick="st()">SEND TEXT</button>
-  <script>function s(c){fetch('/ctrl?c='+c);} function st(){fetch('/text?v='+encodeURIComponent(document.getElementById('txt').value)); document.getElementById('txt').value='';}</script>
-  </body></html>)rawliteral";
+// --- THE IMPROVED WEB INTERFACE (HTML) ---
+const char index_html[] PROGMEM = R"rawliteral(
+<!DOCTYPE HTML><html><head><title>ESP REMOTE</title><meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  body{font-family:Arial;text-align:center;background:#111;color:#0f0;} 
+  .btn{background:#222;color:#0f0;border:1px solid #0f0;padding:20px;width:30%;margin:5px;font-weight:bold;border-radius:10px;}
+  .sub-btn{background:#040;color:#fff;border:1px solid #0f0;padding:20px;width:65%;margin:10px;font-weight:bold;border-radius:10px;}
+  .btn:active, .sub-btn:active{background:#0f0;color:#000;}
+  #txt{padding:12px;width:80%;margin-top:20px;background:#000;color:#0f0;border:1px solid #0f0;font-size:18px;}
+</style>
+</head><body>
+  <h2>REMOTE CONSOLE</h2>
+  <button class="btn" onclick="s('up')">UP</button><br>
+  <button class="btn" onclick="s('sel')">SELECT</button><br>
+  <button class="btn" onclick="s('down')">DOWN</button><br>
+  <button class="sub-btn" onclick="f('/submit')">SUBMIT / SAVE</button>
+  <hr>
+  <input type="text" id="txt" placeholder="Inject Text..."><br>
+  <button class="sub-btn" onclick="st()">SEND TO ESP</button>
+  <script>
+    function s(c){fetch('/ctrl?c='+c);} 
+    function f(u){fetch(u);}
+    function st(){fetch('/text?v='+encodeURIComponent(document.getElementById('txt').value)); document.getElementById('txt').value='';}
+  </script>
+</body></html>)rawliteral";
 
+void drawAPMode() {
   // --- START LOGIC (Only runs once) ---
   if (!serverStarted) {
     WiFi.softAP("SWISS_ARMY_ESP", NULL);
@@ -107,6 +126,11 @@ void drawAPMode() {
     server.on("/text", HTTP_GET, [](AsyncWebServerRequest *r){
       if(r->hasParam("v") && targetString) *targetString = r->getParam("v")->value();
       r->send(200);
+    });
+    // 2. Add this route to your setupWebServer() or inside drawAPMode()
+    server.on("/submit", HTTP_GET, [](AsyncWebServerRequest *r){ 
+      v_submit = true; 
+      r->send(200); 
     });
     server.begin();
     serverStarted = true;
@@ -145,22 +169,33 @@ void drawAPMode() {
   if (v_sel) v_sel = false; 
 }
 void drawStatusBar() {
+  // --- POSITION 1: WIFI STATION (STA) - Far Right (X=115) ---
   if (wifiPower) {
-    wifi_mode_t mode = WiFi.getMode();
-    if (mode == WIFI_AP || mode == WIFI_AP_STA) {
-      // AP mode: draw broadcast/hotspot icon (concentric arcs + dot)
-      display.fillCircle(119, 8, 1, WHITE);               // center dot
-      display.drawCircle(119, 8, 3, WHITE);                // inner arc
-      display.drawCircle(119, 8, 5, WHITE);                // outer arc
-      // Mask bottom half to make it look like upward-radiating arcs
-      display.fillRect(114, 9, 12, 4, BLACK);
-    } else if (WiFi.status() == WL_CONNECTED) {
-      display.fillRect(115, 1, 8, 8, WHITE);              // filled square
+    if (WiFi.status() == WL_CONNECTED) {
+      display.fillRect(115, 1, 8, 8, WHITE); // Solid box = Connected to Router
     } else {
-      display.drawRect(115, 1, 8, 8, WHITE);              // empty square
+      display.drawRect(115, 1, 8, 8, WHITE); // Hollow box = Power ON but not connected
     }
   }
-  if (btPower) { display.setCursor(102, 1); display.print("B"); }
+
+  // --- POSITION 2: ACCESS POINT (AP) - Left of STA (X=102) ---
+  // Check if AP mode is physically active in the hardware
+  if (WiFi.getMode() & WIFI_AP) { 
+    display.setCursor(102, 1);
+    display.print("A"); // "A" indicates the Phone Remote/AP is alive
+    
+    // Optional: Make the "A" blink if someone is actually connected to you
+    if (WiFi.softAPgetStationNum() > 0) {
+       if ((millis() / 500) % 2 == 0) display.drawPixel(108, 1, WHITE); 
+    }
+  }
+
+  // --- POSITION 3: BLUETOOTH (If needed, X=90) ---
+  if (btPower) { 
+    display.setCursor(90, 1); 
+    display.print("B"); 
+  }
+
   display.drawFastHLine(0, 11, 128, WHITE);
 }
 
@@ -450,6 +485,9 @@ void drawKeyboard() {
   
   display.setTextSize(1);
   display.setCursor(0, 13); display.print(keyboardLabel);
+  
+  // This line is where the magic happens: as you type on your phone, 
+  // the text route updates *targetString, and it appears here instantly.
   display.setCursor(0, 23); display.print("VAL: "); display.print(*targetString); display.println("_");
   display.drawFastHLine(0, 31, 128, WHITE);
 
@@ -461,13 +499,19 @@ void drawKeyboard() {
   display.setCursor(88, 45); display.print(activeSet[(charIdx + 1) % len]);
   display.setCursor(113, 45); display.print(activeSet[(charIdx + 2) % len]);
 
-  if (digitalRead(PIN_DOWN) == HIGH) { 
+  // --- DUAL CONTROL: DOWN ---
+  if (digitalRead(PIN_DOWN) == HIGH || v_down) { 
+    v_down = false; 
     charIdx = (charIdx + 1) % len; 
     while(digitalRead(PIN_DOWN) == HIGH); 
-    delay(200); // Prevents fast scrolling
+    delay(200); 
   }
-  if (digitalRead(PIN_UP) == HIGH) {
+
+  // --- DUAL CONTROL: UP ---
+  if (digitalRead(PIN_UP) == HIGH || v_up) {
+    v_up = false;
     unsigned long upStart = millis();
+    // Physical button long-press for set change
     while(digitalRead(PIN_UP) == HIGH) {
       if(millis() - upStart > 1000) { 
         currentSet = (currentSet + 1) % 3; charIdx = 0; 
@@ -476,32 +520,42 @@ void drawKeyboard() {
         break; 
       }
     }
+    // Short press or Virtual UP
     if(millis() - upStart <= 1000) {
       charIdx = (charIdx - 1 + len) % len;
       delay(200);
     }
   }
-if (digitalRead(PIN_SELECT) == HIGH) {
-    unsigned long start = millis();
-    while(digitalRead(PIN_SELECT) == HIGH); 
-    unsigned long dur = millis() - start;
 
-    if (dur > 2500) {
-       currentState = returnState; // ENTER/SAVE
-       delay(500); 
+  // --- DUAL CONTROL: SELECT ---
+  if (digitalRead(PIN_SELECT) == HIGH || v_sel || v_submit) {
+    unsigned long start = millis();
+    bool isRemoteSubmit = v_submit; // Store the flag state
+    v_submit = false; // Reset immediately
+    
+    if (digitalRead(PIN_SELECT) == HIGH) {
+      while(digitalRead(PIN_SELECT) == HIGH); 
     }
-    else if (dur > 800) { 
-       if ((*targetString).length() > 0) (*targetString).remove((*targetString).length() - 1); 
-       delay(300); 
+    
+    unsigned long dur = (v_sel || isRemoteSubmit) ? 0 : (millis() - start);
+    v_sel = false;
+
+    // Logic: If it's a long press OR the dedicated Remote Submit button
+    if (dur > 2500 || isRemoteSubmit) { 
+      currentState = returnState; // Success! Save and move to connection
+      delay(500); 
     }
-    else {
+    else if (dur > 800) { // Medium press: Backspace
+      if ((*targetString).length() > 0) (*targetString).remove((*targetString).length() - 1); 
+      delay(300); 
+    }
+    else { // Short press (Physical or Virtual Select)
       char selectedChar = activeSet[charIdx];
       if (selectedChar == '<') { 
         if ((*targetString).length() > 0) (*targetString).remove((*targetString).length() - 1); 
       } 
       else if (selectedChar == 'X') { 
-        // --- NEW CANCEL LOGIC ---
-        currentState = WIFI_MENU; // Exit without connecting
+        currentState = WIFI_MENU; 
       }
       else {
         *targetString += selectedChar;
@@ -512,9 +566,52 @@ if (digitalRead(PIN_SELECT) == HIGH) {
 }
 
 void handleConnection() {
-  display.setCursor(20, 35); display.print("Connecting..."); display.display();
+  display.clearDisplay();
+  display.setCursor(20, 30);
+  display.print("Connecting...");
+  display.setCursor(20, 42);
+  display.print(selectedSSID.substring(0, 15));
+  display.display();
+
+  // --- STEP 1: PREPARE RADIO ---
+  // If AP is running, we keep it alive but ensure we are in STA+AP mode
+  if (WiFi.getMode() & WIFI_AP) {
+    WiFi.mode(WIFI_AP_STA); 
+  } else {
+    WiFi.mode(WIFI_STA);
+  }
+
+  // --- STEP 2: BEGIN HANDSHAKE ---
   WiFi.begin(selectedSSID.c_str(), password.c_str());
-  int t = 0; while (WiFi.status() != WL_CONNECTED && t < 20) { delay(500); t++; }
+  
+  int attempts = 0;
+  // We check for 20 attempts (10 seconds total)
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(500);
+    attempts++;
+    
+    // Visual progress bar
+    display.fillRect(20, 52, attempts * 4, 3, WHITE);
+    display.display();
+  }
+  
+  // --- STEP 3: RESULT HANDLING ---
+  display.clearDisplay();
+  display.setCursor(20, 30);
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    display.println("CONNECTED!");
+    display.setCursor(20, 42);
+    display.println(WiFi.localIP().toString());
+  } else {
+    display.println("FAILED");
+    display.setCursor(10, 42);
+    display.println("Check Password");
+    WiFi.disconnect(); // Clean up failed attempt
+  }
+  
+  display.display();
+  delay(2000); 
   currentState = HOME;
 }
 
