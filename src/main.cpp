@@ -187,7 +187,6 @@ void drawAPMode() {
   display.println("IP  : 192.168.4.1");
   display.print("Clients: "); display.println(WiFi.softAPgetStationNum());
   
-  display.drawFastHLine(0, 48, 128, WHITE);
   display.setCursor(0, 52); display.println("UP: BACK (Keep AP)");
   display.setCursor(0, 60); display.println("DN: STOP AP & EXIT");
 
