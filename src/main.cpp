@@ -7,6 +7,7 @@
 #include "keyboard_logic.h"
 #include "connection_logic.h"
 #include "sleep_logic.h" // Add this at the top
+#include "placeholders.h" // Add this at the top
 
 // --- INSTANTIATE GLOBALS ---
 Adafruit_SSD1306 display(128, 64, &Wire, -1);
@@ -43,6 +44,8 @@ void loop() {
     case WIFI_STATUS:    drawWiFiStatus();   break;
     case AP_MODE:        drawAPMode();       break;
     case SLEEP_MENU:     drawSleepMenu();    break;
+    case BLUETOOTH_MENU: drawPlaceholder("BLUETOOTH"); break;
+    case IR_MENU:        drawPlaceholder("IR REMOTE"); break;
     default:             drawHomeScreen();   break;
     
   }
