@@ -1,2 +1,2 @@
 1)update sleep to control with phone
-3)out put of oled should be visible in cell phone in brodcast 
+ 
