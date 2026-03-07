@@ -1,2 +1,4 @@
-1)update sleep to control with phone
+we are succesfully able to send rf signal 
+315 for cars
+433 for fans
  
