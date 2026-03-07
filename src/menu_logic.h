@@ -5,10 +5,13 @@
 
 // --- 1. MAIN SYSTEM MENU ---
 void drawMainMenu() {
-  const char* options[] = {"1. WiFi", "2. Bluetooth", "3. IR", "4. Sleep", "5. Exit"};
-  for (int i = 0; i < 5; i++) {
+  // Added Sub-GHz to the list
+  const char* options[] = {"1. WiFi", "2. Bluetooth", "3. IR", "4. Sub-GHz", "5. Sleep", "6. Exit"};
+  int totalMainOpts = 6;
+
+  for (int i = 0; i < totalMainOpts; i++) {
     int y = 15 + (i * 10);
-    // Highlight the selected item
+    // Highlight logic
     if (i == menuIdx) { 
       display.fillRect(0, y-1, 128, 10, WHITE); 
       display.setTextColor(BLACK); 
@@ -23,27 +26,28 @@ void drawMainMenu() {
   // --- INPUT HANDLING ---
   if (digitalRead(PIN_DOWN) == HIGH || v_down) { 
     v_down = false; 
-    menuIdx = (menuIdx + 1) % 5; 
+    menuIdx = (menuIdx + 1) % totalMainOpts; 
     while(digitalRead(PIN_DOWN) == HIGH); delay(250); 
   }
 
   if (digitalRead(PIN_UP) == HIGH || v_up) { 
     v_up = false; 
-    menuIdx = (menuIdx - 1 + 5) % 5; 
+    menuIdx = (menuIdx - 1 + totalMainOpts) % totalMainOpts; 
     while(digitalRead(PIN_UP) == HIGH); delay(250); 
   }
 
   if (digitalRead(PIN_SELECT) == HIGH || v_sel) {
     v_sel = false;
-    // Switch states based on selection
+    // Updated switch logic for new menu order
     if (menuIdx == 0) currentState = WIFI_MENU;
     else if (menuIdx == 1) currentState = BLUETOOTH_MENU;
     else if (menuIdx == 2) currentState = IR_MENU;
-    else if (menuIdx == 3) currentState = SLEEP_MENU;
-    else if (menuIdx == 4) currentState = HOME;
+    else if (menuIdx == 3) currentState = SUBGHZ_MENU; // <--- NEW: Switch to Sub-GHz
+    else if (menuIdx == 4) currentState = SLEEP_MENU;
+    else if (menuIdx == 5) currentState = HOME;
     
     while(digitalRead(PIN_SELECT) == HIGH); 
-    menuIdx = 0; // Reset index for the next screen
+    menuIdx = 0; // Reset for the next screen
     delay(300);
   }
 }
@@ -60,7 +64,6 @@ void drawWiFiMenu() {
   };
   int totalOpts = 5;
 
-  // Scroll logic for 128x64 display
   int startIdx = (menuIdx >= 4) ? menuIdx - 3 : 0;
 
   for (int i = 0; i < 4; i++) {
@@ -79,7 +82,6 @@ void drawWiFiMenu() {
   }
   display.setTextColor(WHITE);
 
-  // --- INPUT HANDLING ---
   if (digitalRead(PIN_DOWN) == HIGH || v_down) { 
     v_down = false; 
     menuIdx = (menuIdx + 1) % totalOpts; 
@@ -96,7 +98,6 @@ void drawWiFiMenu() {
     v_sel = false;
     if (menuIdx == 0) { 
       wifiPower = !wifiPower; 
-      // Set hardware radio mode
       if(wifiPower) WiFi.mode(WIFI_STA); else WiFi.mode(WIFI_OFF); 
     }
     else if (menuIdx == 1 && wifiPower) currentState = SCANNING;
