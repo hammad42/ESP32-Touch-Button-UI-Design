@@ -3,62 +3,129 @@
 
 #include "globals.h"
 
-// --- 1. FREQUENCY ANALYZER (The "Sniffer") ---
-void handleSubGhzScan() {
-  display.setCursor(0, 15); display.println("--- SUB-GHZ SCAN ---");
-  
-  // Update Frequency and Read RSSI
-    ELECHOUSE_cc1101.SetRx(); // Start Listening
-    if (signal) {
-      int rssi = ELECHOUSE_cc1101.getRssi();
-      display.setCursor(0, 42);
-        display.print("RSSI: "); display.print(rssi); display.println(" dBm");
-        int barWidth = map(constrain(rssi, -100, -20), -100, -20, 0, 100);
-  display.drawRect(10, 52, 104, 6, WHITE);
-  display.fillRect(12, 54, barWidth, 2, WHITE);
+// --- 1. CONFIGURATION ARRAYS ---
+// The options available to toggle through
+float freqList[] = {433.92, 315.00, 868.35, 915.00};
+const char* freqNames[] = {"433.92", "315.00", "868.35", "915.00"};
+
+int modList[] = {2, 0}; // 2=ASK/OOK (Remotes), 0=2-FSK (Data/Cars)
+const char* modNames[] = {"ASK", "FSK"};
+
+// --- GLOBAL VARIABLES ---
+// Store the current selection here so it remembers it
+int currentFreqIdx = 0; // Default to 433.92
+int currentModIdx = 0;  // Default to ASK
+bool subghzStarted = false;
+
+
+// --- INITIALIZATION FUNCTION ---
+void initSubGhz() {
+  if (!subghzStarted) {
+    display.clearDisplay();
+    display.setCursor(0, 20); display.println("Starting Radio...");
+    display.display();
+
+    // 1. Define Pins
+    ELECHOUSE_cc1101.setSpiPin(18, 19, 23, 5); 
+    ELECHOUSE_cc1101.setGDO0(CC_GDO0);         
+
+    // 2. Attempt Detection
+    if (ELECHOUSE_cc1101.getCC1101()) {
+      ELECHOUSE_cc1101.Init();
+      // Use the variables instead of hardcoded numbers
+      ELECHOUSE_cc1101.setMHZ(freqList[currentFreqIdx]);    
+      ELECHOUSE_cc1101.setModulation(modList[currentModIdx]);  
+      ELECHOUSE_cc1101.setDRate(512); 
+      
+      subghzStarted = true;
+      Serial.println("Sub-GHz Radio Initialized.");
     } else {
-      display.setCursor(0, 42); display.println("No Signal Detected");
+      display.setCursor(0, 35); display.println("Radio Not Found!");
+      display.display();
+      delay(2000);
     }
-  
-  
-  
-
-  // Visual Signal Strength Bar
-  
-
-  if (digitalRead(PIN_SELECT) == HIGH || v_sel) { 
-    v_sel = false; currentState = SUBGHZ_MENU; delay(300); 
   }
 }
 
-// --- 2. BRUTE FORCE (The "Auditor") ---
-void handleSubGhzBrute() {
-    display.setCursor(0, 15); display.println("--- BRUTE FORCE ---");
-    display.setCursor(0, 30); display.println("Not Implemented Yet");
-    display.setCursor(0, 45); display.print("[SELECT: BACK]");
+// --- FREQUENCY ANALYZER (The "Scanner") ---
+void handleSubGhzScan() {
+  // 1. Header
+  display.setCursor(0, 0); display.println("--- ANALYZER ---");
+  
+  // 2. Display Config (Visible on Screen)
+  display.setCursor(0, 12);
+  display.print("Frq: "); display.print(freqNames[currentFreqIdx]); display.print(" [UP]");
+
+  display.setCursor(0, 22);
+  display.print("Mod: "); display.print(modNames[currentModIdx]); display.print("    [DWN]");
+
+  // 3. Radio Logic
+  ELECHOUSE_cc1101.SetRx(); 
+  int rssi = ELECHOUSE_cc1101.getRssi();
+  
+  // 4. Display RSSI
+  display.setCursor(0, 35);
+  display.print("RSSI: "); display.print(rssi); display.println(" dBm");
+
+  // 5. Visual Bar
+  if (rssi >= -100) { 
+    int barWidth = map(constrain(rssi, -100, -20), -100, -20, 0, 100);
+    display.drawRect(10, 48, 108, 6, WHITE);
+    display.fillRect(12, 50, barWidth, 2, WHITE);
     
-    if (digitalRead(PIN_SELECT) == HIGH || v_sel) { 
-        v_sel = false; currentState = SUBGHZ_MENU; delay(300); 
+    // Peak Detector
+    if (rssi > -60) {
+       display.setCursor(10, 56); display.println("SIGNAL FOUND!");
     }
+  }
+
+  // --- CONTROLS ---
+
+  // UP Button: Change Frequency
+  if (digitalRead(PIN_UP) == HIGH || v_up) {
+    v_up = false;
+    currentFreqIdx = (currentFreqIdx + 1) % 4; // Cycle 0-3
+    
+    // Apply New Settings Immediately
+    ELECHOUSE_cc1101.setMHZ(freqList[currentFreqIdx]);
+    ELECHOUSE_cc1101.setModulation(modList[currentModIdx]); 
+    ELECHOUSE_cc1101.SetRx(); // Restart RX with new settings
+    
+    delay(200); // Debounce
+  }
+  
+  // DOWN Button: Change Modulation
+  if (digitalRead(PIN_DOWN) == HIGH || v_down) {
+    v_down = false;
+    currentModIdx = (currentModIdx + 1) % 2; // Cycle 0-1
+    
+    // Apply New Settings Immediately
+    ELECHOUSE_cc1101.setMHZ(freqList[currentFreqIdx]);
+    ELECHOUSE_cc1101.setModulation(modList[currentModIdx]);
+    ELECHOUSE_cc1101.SetRx(); 
+    
+    delay(200); 
+  }
+
+  // SELECT Button: Back
+  if (digitalRead(PIN_SELECT) == HIGH || v_sel) { 
+    v_sel = false; 
+    ELECHOUSE_cc1101.setSidle(); 
+    currentState = SUBGHZ_MENU; 
+    delay(300); 
+  }
 }
 
-// --- 3. SUB-GHZ MENU ---
+// --- MAIN SUB-GHZ MENU ---
 void drawSubGhzMenu() {
+  initSubGhz(); // Ensure radio is on
+
   display.setCursor(0, 15); display.println("   --- SUB-GHZ ---");
   
-  // Added Raw Sniffer and Hardware Check to the list
-  const char* options[] = {
-    "1. Freq Analyzer", 
-    "2. Raw Sniffer", 
-    "3. Brute Force", 
-    "4. waveform", 
-    "5. Back"
-  };
-  int totalOpts = 5; // Updated count
+  const char* options[] = {"1. Freq Analyzer", "2. Back"};
+  int totalOpts = 2;
 
-  // Scroll logic for 128x64 display (shows 4 items at a time)
   int startIdx = (menuIdx >= 4) ? menuIdx - 3 : 0;
-
   for (int i = 0; i < 4; i++) {
     int cur = startIdx + i; 
     if (cur >= totalOpts) break;
@@ -70,106 +137,27 @@ void drawSubGhzMenu() {
     } else {
       display.setTextColor(WHITE);
     }
-    display.setCursor(5, y); 
-    display.println(options[cur]);
+    display.setCursor(5, y); display.println(options[cur]);
   }
   display.setTextColor(WHITE);
 
-  // --- INPUT HANDLING ---
   if (digitalRead(PIN_DOWN) == HIGH || v_down) { 
-    v_down = false; 
-    menuIdx = (menuIdx + 1) % totalOpts; 
+    v_down = false; menuIdx = (menuIdx + 1) % totalOpts; 
     while(digitalRead(PIN_DOWN) == HIGH); delay(200); 
   }
   
   if (digitalRead(PIN_UP) == HIGH || v_up) { 
-    v_up = false; 
-    menuIdx = (menuIdx - 1 + totalOpts) % totalOpts; 
+    v_up = false; menuIdx = (menuIdx - 1 + totalOpts) % totalOpts; 
     while(digitalRead(PIN_UP) == HIGH); delay(200); 
   }
 
   if (digitalRead(PIN_SELECT) == HIGH || v_sel) {
     v_sel = false;
-    
-    // Updated state transitions
-    if (menuIdx == 0)      currentState = SUBGHZ_SCAN;
-    else if (menuIdx == 1) currentState = SUBGHZ_READ;  // Points to handleSubGhzRaw()
-    else if (menuIdx == 2) currentState = SUBGHZ_BRUTE; // Points to handleSubGhzBrute()
-    else if (menuIdx == 3) currentState = SUBGHZ_WAVE;  // Points to handleSubGhzWaveform()
-    else if (menuIdx == 4) currentState = MAIN_MENU;
+    if (menuIdx == 0)      currentState = SUBGHZ_SCAN;  
+    else if (menuIdx == 1) currentState = MAIN_MENU;
 
     while(digitalRead(PIN_SELECT) == HIGH);
     menuIdx = 0; delay(300);
-  }
-}
-
-void handleSubGhzRaw() {
-  display.setCursor(0, 15); display.println("--- RAW CAPTURE ---");
-  display.setCursor(0, 25); display.println("Waiting for GDO0...");
-  
-  // 1. Put the chip into Receive (RX) Mode
-  ELECHOUSE_cc1101.SetRx(); 
-  
-  unsigned long startTime = micros();
-  bool lastState = digitalRead(CC_GDO0);
-  int pulseCount = 0;
-
-  // 2. Capture loop (Runs for 2 seconds or until 100 pulses)
-  while (millis() - startTime / 1000 < 2000 && pulseCount < 100) {
-    bool currentState = digitalRead(CC_GDO0);
-    
-    if (currentState != lastState) {
-      unsigned long duration = micros() - startTime;
-      startTime = micros();
-      
-      // Print pulse length to Serial Monitor for analysis
-      Serial.print(lastState ? "HIGH: " : "LOW: ");
-      Serial.println(duration);
-      
-      lastState = currentState;
-      pulseCount++;
-    }
-    
-    // Allow exit via button
-    if (digitalRead(PIN_SELECT) == HIGH) break;
-  }
-
-  
-  display.setCursor(0, 45); display.print("Pulses: "); display.println(pulseCount);
-  display.setCursor(0, 56); display.print("[SELECT: BACK]");
-
-  if (digitalRead(PIN_SELECT) == HIGH || v_sel) { 
-    v_sel = false; currentState = SUBGHZ_MENU; delay(300); 
-  }
-}
-
-void handleSubGhzWaveform() {
-  display.clearDisplay();
-  display.setCursor(0, 0); 
-  display.println("RAW SNIFFER - 433.92");
-  
-  ELECHOUSE_cc1101.SetRx(); // Start Listening
-  
-  int xPos = 0;
-  while (xPos < 128) {
-    bool signal = digitalRead(CC_GDO0);
-    if (signal) display.drawLine(xPos, 45, xPos, 25, WHITE); 
-    else display.drawPixel(xPos, 45, WHITE);
-
-    xPos++;
-    delayMicroseconds(500);
-    if (digitalRead(PIN_SELECT) == HIGH) break;
-  }
-
-  display.setCursor(0, 55);
-  display.print("RSSI: "); display.print(ELECHOUSE_cc1101.getRssi());
-  display.display();
-
-  if (digitalRead(PIN_SELECT) == HIGH || v_sel) { 
-    v_sel = false; 
-    ELECHOUSE_cc1101.setSidle(); // <--- Corrected name here
-    currentState = SUBGHZ_MENU; 
-    delay(300); 
   }
 }
 
