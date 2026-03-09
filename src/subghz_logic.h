@@ -82,7 +82,7 @@ void handleSubGhzScan() {
   
   if (digitalRead(PIN_DOWN) == HIGH || v_down) {
     v_down = false;
-    currentModIdx = (currentModIdx + 1) % 2; 
+    currentModIdx = (currentModIdx + 1) % 4; 
     ELECHOUSE_cc1101.setMHZ(freqList[currentFreqIdx]);
     ELECHOUSE_cc1101.setModulation(modList[currentModIdx]);
     ELECHOUSE_cc1101.SetRx(); 
