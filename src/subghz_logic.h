@@ -3,18 +3,18 @@
 
 #include "globals.h"
 
+
 // --- 1. CONFIGURATION ARRAYS ---
-// The options available to toggle through
 float freqList[] = {433.92, 315.00, 868.35, 915.00};
 const char* freqNames[] = {"433.92", "315.00", "868.35", "915.00"};
 
-int modList[] = {2, 0}; // 2=ASK/OOK (Remotes), 0=2-FSK (Data/Cars)
-const char* modNames[] = {"ASK", "FSK"};
+// Updated Modulation List (4 options now)
+int modList[] = {2, 0, 1, 3}; 
+const char* modNames[] = {"ASK", "2FSK", "GFSK", "4FSK"};
 
 // --- GLOBAL VARIABLES ---
-// Store the current selection here so it remembers it
-int currentFreqIdx = 0; // Default to 433.92
-int currentModIdx = 0;  // Default to ASK
+int currentFreqIdx = 0; 
+int currentModIdx = 0;  
 bool subghzStarted = false;
 
 
@@ -25,14 +25,11 @@ void initSubGhz() {
     display.setCursor(0, 20); display.println("Starting Radio...");
     display.display();
 
-    // 1. Define Pins
     ELECHOUSE_cc1101.setSpiPin(18, 19, 23, 5); 
     ELECHOUSE_cc1101.setGDO0(CC_GDO0);         
 
-    // 2. Attempt Detection
     if (ELECHOUSE_cc1101.getCC1101()) {
       ELECHOUSE_cc1101.Init();
-      // Use the variables instead of hardcoded numbers
       ELECHOUSE_cc1101.setMHZ(freqList[currentFreqIdx]);    
       ELECHOUSE_cc1101.setModulation(modList[currentModIdx]);  
       ELECHOUSE_cc1101.setDRate(512); 
@@ -47,70 +44,55 @@ void initSubGhz() {
   }
 }
 
-// --- FREQUENCY ANALYZER (The "Scanner") ---
+// --- FREQUENCY ANALYZER ---
 void handleSubGhzScan() {
-  // 1. Header
   display.setCursor(0, 0); display.println("--- ANALYZER ---");
   
-  // 2. Display Config (Visible on Screen)
+  // Display Config
   display.setCursor(0, 12);
   display.print("Frq: "); display.print(freqNames[currentFreqIdx]); display.print(" [UP]");
-
   display.setCursor(0, 22);
   display.print("Mod: "); display.print(modNames[currentModIdx]); display.print("    [DWN]");
 
-  // 3. Radio Logic
+  // Radio Logic
   ELECHOUSE_cc1101.SetRx(); 
   int rssi = ELECHOUSE_cc1101.getRssi();
   
-  // 4. Display RSSI
   display.setCursor(0, 35);
   display.print("RSSI: "); display.print(rssi); display.println(" dBm");
 
-  // 5. Visual Bar
   if (rssi >= -100) { 
     int barWidth = map(constrain(rssi, -100, -20), -100, -20, 0, 100);
     display.drawRect(10, 48, 108, 6, WHITE);
     display.fillRect(12, 50, barWidth, 2, WHITE);
-    
-    // Peak Detector
     if (rssi > -60) {
        display.setCursor(10, 56); display.println("SIGNAL FOUND!");
     }
   }
 
   // --- CONTROLS ---
-
-  // UP Button: Change Frequency
   if (digitalRead(PIN_UP) == HIGH || v_up) {
     v_up = false;
-    currentFreqIdx = (currentFreqIdx + 1) % 4; // Cycle 0-3
-    
-    // Apply New Settings Immediately
+    currentFreqIdx = (currentFreqIdx + 1) % 4; 
     ELECHOUSE_cc1101.setMHZ(freqList[currentFreqIdx]);
     ELECHOUSE_cc1101.setModulation(modList[currentModIdx]); 
-    ELECHOUSE_cc1101.SetRx(); // Restart RX with new settings
-    
-    delay(200); // Debounce
+    ELECHOUSE_cc1101.SetRx(); 
+    delay(200); 
   }
   
-  // DOWN Button: Change Modulation
   if (digitalRead(PIN_DOWN) == HIGH || v_down) {
     v_down = false;
-    currentModIdx = (currentModIdx + 1) % 2; // Cycle 0-1
-    
-    // Apply New Settings Immediately
+    currentModIdx = (currentModIdx + 1) % 2; 
     ELECHOUSE_cc1101.setMHZ(freqList[currentFreqIdx]);
     ELECHOUSE_cc1101.setModulation(modList[currentModIdx]);
     ELECHOUSE_cc1101.SetRx(); 
-    
     delay(200); 
   }
 
-  // SELECT Button: Back
+  // Back to SUB-GHZ MENU (Just Idle, not full off yet)
   if (digitalRead(PIN_SELECT) == HIGH || v_sel) { 
     v_sel = false; 
-    ELECHOUSE_cc1101.setSidle(); 
+    ELECHOUSE_cc1101.setSidle(); // Standby mode (Fast wake-up)
     currentState = SUBGHZ_MENU; 
     delay(300); 
   }
@@ -118,7 +100,7 @@ void handleSubGhzScan() {
 
 // --- MAIN SUB-GHZ MENU ---
 void drawSubGhzMenu() {
-  initSubGhz(); // Ensure radio is on
+  initSubGhz(); // Wake up if we just arrived
 
   display.setCursor(0, 15); display.println("   --- SUB-GHZ ---");
   
@@ -153,8 +135,16 @@ void drawSubGhzMenu() {
 
   if (digitalRead(PIN_SELECT) == HIGH || v_sel) {
     v_sel = false;
-    if (menuIdx == 0)      currentState = SUBGHZ_SCAN;  
-    else if (menuIdx == 1) currentState = MAIN_MENU;
+    
+    if (menuIdx == 0) {
+      currentState = SUBGHZ_SCAN;  
+    } 
+    else if (menuIdx == 1) { 
+      // --- POWER DOWN LOGIC ---
+      ELECHOUSE_cc1101.goSleep(); // Full Deep Sleep (0.2uA)
+      subghzStarted = false;           // Mark as stopped so we Re-Init next time
+      currentState = MAIN_MENU;
+    }
 
     while(digitalRead(PIN_SELECT) == HIGH);
     menuIdx = 0; delay(300);
