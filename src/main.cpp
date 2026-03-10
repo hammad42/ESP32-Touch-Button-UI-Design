@@ -26,25 +26,17 @@ bool subghzInit = false; // Track if CC1101 is physically present
 void setup() {
   Serial.begin(115200);
   pinMode(PIN_UP, INPUT); pinMode(PIN_DOWN, INPUT); pinMode(PIN_SELECT, INPUT);
+  
+  // --- CC1101 Data Pins ---
+  pinMode(CC_GDO0, INPUT);  // RX Pin
+  // pinMode(CC_GDO2, OUTPUT); // TX Pin (Crucial for Playback)
+  // digitalWrite(CC_GDO2, LOW);
+
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) for(;;);
   WiFi.mode(WIFI_OFF); display.setTextColor(WHITE);
 
-  // --- CC1101 SPI SETUP ---
-  ELECHOUSE_cc1101.setSpiPin(18, 19, 23, 5); // SCK, MISO, MOSI, CS (Adjust if using S3)
-  ELECHOUSE_cc1101.setGDO0(CC_GDO0);
-   // 2 = ASK/OOK (Common for remotes)
-  // if (ELECHOUSE_cc1101.getCC1101()) { 
-  //   Serial.println("CC1101 detected! Initializing...");
-  //   ELECHOUSE_cc1101.Init();
-  //   ELECHOUSE_cc1101.setMHZ(868.35); // Start at standard frequency
-  //   ELECHOUSE_cc1101.setModulation(2);
-  //   // Set internal Gain (High sensitivity for sniffing)
-  //   ELECHOUSE_cc1101.setDRate(512); // Low data rate = better range
+
     subghzInit = false;
-  // } 
-  // else {
-  //   Serial.println("CC1101 not detected! Sub-GHz features will be unavailable.");
-  // }
 
 }
 
@@ -65,11 +57,14 @@ void loop() {
     case SLEEP_MENU:     drawSleepMenu();    break;
     case BLUETOOTH_MENU: drawPlaceholder("BLUETOOTH"); break;
     case IR_MENU:        drawPlaceholder("IR REMOTE"); break;
-    case SUBGHZ_MENU:  drawSubGhzMenu();   break;
-    case SUBGHZ_SCAN:  handleSubGhzScan();  break;
-
-    default:             drawHomeScreen();   break;
     
+    // --- SUB-GHZ SECTION ---
+    case SUBGHZ_MENU:    drawSubGhzMenu();     break;
+    case SUBGHZ_SCAN:    handleSubGhzScan();   break;
+    case SUBGHZ_RECORD:  handleSubGhzRecord(); break; // <--- NEW
+    case SUBGHZ_PLAY:    handleSubGhzPlay();   break; // <--- NEW
+
+    default:             drawHomeScreen();     break;
   }
 
   display.display();

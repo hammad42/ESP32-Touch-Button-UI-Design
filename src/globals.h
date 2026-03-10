@@ -34,9 +34,8 @@ enum AppState {
   AP_MODE,
   SUBGHZ_MENU,    // <--- NEW
   SUBGHZ_SCAN,    // <--- NEW
-  SUBGHZ_BRUTE,   // <--- NEW
-  SUBGHZ_READ,    // <--- NEW
-  SUBGHZ_WAVE     // <--- NEW
+  SUBGHZ_RECORD,  // <--- ADD THIS
+  SUBGHZ_PLAY     // <--- ADD THIS
 };
 
 // --- 3. SHARED SYSTEM OBJECTS ---
