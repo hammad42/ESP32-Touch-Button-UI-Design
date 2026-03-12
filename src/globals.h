@@ -5,6 +5,7 @@
 #include <Adafruit_SSD1306.h>
 #include <ESPAsyncWebServer.h>
 #include <ELECHOUSE_CC1101_SRC_DRV.h>  // <--- This is the correct filename // <--- NEW Library for CC1101
+#include <LittleFS.h>
 // --- 1. HARDWARE PINS ---
 // --- UPDATED HARDWARE PINS (Conflict-Free) ---
 #define PIN_UP     27  // Moved from 4 (Optional, but 27 is safer)
@@ -35,7 +36,8 @@ enum AppState {
   SUBGHZ_MENU,    // <--- NEW
   SUBGHZ_SCAN,    // <--- NEW
   SUBGHZ_RECORD,  // <--- ADD THIS
-  SUBGHZ_PLAY     // <--- ADD THIS
+  SUBGHZ_PLAY,    // <--- ADD THIS
+  SUBGHZ_SAVED_LIST // <--- ADD THIS
 };
 
 // --- 3. SHARED SYSTEM OBJECTS ---

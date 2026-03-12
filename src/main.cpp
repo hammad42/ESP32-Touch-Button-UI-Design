@@ -35,6 +35,9 @@ void setup() {
   if(!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) for(;;);
   WiFi.mode(WIFI_OFF); display.setTextColor(WHITE);
 
+  if (!LittleFS.begin(true)) {
+    Serial.println("LittleFS Mount Failed");
+  }
 
     subghzInit = false;
 
@@ -63,6 +66,7 @@ void loop() {
     case SUBGHZ_SCAN:    handleSubGhzScan();   break;
     case SUBGHZ_RECORD:  handleSubGhzRecord(); break; // <--- NEW
     case SUBGHZ_PLAY:    handleSubGhzPlay();   break; // <--- NEW
+    case SUBGHZ_SAVED_LIST: handleSubGhzSavedList(); break;
 
     default:             drawHomeScreen();     break;
   }

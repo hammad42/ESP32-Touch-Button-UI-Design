@@ -16,8 +16,44 @@ int currentModIdx = 0;
 
 // --- RECORDING BUFFER ---
 #define MAX_PULSES 512
-uint32_t pulseBuffer[MAX_PULSES];
-int pulseCount = 0;
+volatile uint32_t pulseBuffer[MAX_PULSES];
+volatile int pulseCount = 0;
+volatile unsigned long lastTime = 0;
+
+void handleSubGhzSavedList(); // Forward declaration
+
+// --- RECORDING INTERRUPT ---
+volatile unsigned long accumulatedNoise = 0;
+
+void IRAM_ATTR subghzRecordISR() {
+  if (pulseCount < MAX_PULSES) {
+    unsigned long now = micros();
+    unsigned long duration = now - lastTime;
+
+    if (lastTime == 0) {
+      lastTime = now;
+      return;
+    }
+
+    // Filter tiny noise spikes (< 50us)
+    if (duration < 50) {
+      accumulatedNoise += duration;
+    } else {
+      // If there was noise, we need to effectively ignore it by NOT registering this
+      // edge. If we register it, the state flips. Instead, we can add this duration
+      // to the *previous* pulse to "fill" the glitch, and decrement pulseCount so the
+      // next real edge overwrites this flip.
+      if (accumulatedNoise > 0 && pulseCount > 0) {
+         pulseBuffer[pulseCount - 1] += duration + accumulatedNoise;
+         accumulatedNoise = 0;
+      } else {
+         pulseBuffer[pulseCount++] = duration + accumulatedNoise;
+         accumulatedNoise = 0;
+      }
+    }
+    lastTime = now;
+  }
+}
 
 
 // --- INITIALIZATION FUNCTION ---
@@ -36,6 +72,8 @@ void initSubGhz() {
       ELECHOUSE_cc1101.setMHZ(freqList[currentFreqIdx]);    
       ELECHOUSE_cc1101.setModulation(modList[currentModIdx]);  
       ELECHOUSE_cc1101.setDRate(512); 
+      ELECHOUSE_cc1101.setPA(12); // MAX Transmit Power
+      ELECHOUSE_cc1101.setRxBW(58); // Optimal Receive Bandwidth
       
       subghzInit = true; // Set the global flag
       Serial.println("Sub-GHz Radio Initialized.");
@@ -156,11 +194,9 @@ void handleSubGhzRecord() {
   display.display();
 
   pulseCount = 0;
-  bool lastState = LOW;
-  unsigned long lastChangeTime = micros();
   bool trigger = false;
 
-  // Wait for a strong signal (RSSI > -60)
+  // Wait for a strong signal (RSSI > -70)
   while (!trigger) {
     if (digitalRead(PIN_SELECT) == HIGH || v_sel) { 
         v_sel = false; currentState = SUBGHZ_MENU; return; // Cancel
@@ -172,48 +208,95 @@ void handleSubGhzRecord() {
     }
   }
 
-  // --- PHASE 4: RECORDING LOOP ---
+  // --- PHASE 4: RECORDING LOOP (INTERRUPT DRIVEN) ---
   display.setCursor(0, 50); display.print("CAPTURING...");
   display.display();
   
-  lastChangeTime = micros(); // Reset timer at start of capture
-  lastState = digitalRead(CC_GDO0);
+  lastTime = 0; // Initialize interrupt timer
+  pulseCount = 0;
+  accumulatedNoise = 0;
 
+  attachInterrupt(digitalPinToInterrupt(CC_GDO0), subghzRecordISR, CHANGE);
+
+  unsigned long startTime = millis();
   while (pulseCount < MAX_PULSES) {
-    bool currentState = digitalRead(CC_GDO0);
-    
-    if (currentState != lastState) {
-      unsigned long now = micros();
-      unsigned long duration = now - lastChangeTime;
-      
-      // Filter tiny noise spikes (< 50us)
-      if (duration > 50) { 
-        pulseBuffer[pulseCount++] = duration;
-        lastChangeTime = now;
-        lastState = currentState;
-      } else {
-        lastChangeTime = now; 
-      }
-    }
-
     // Stop if silence for > 50ms (End of packet)
-    if (micros() - lastChangeTime > 50000 && pulseCount > 10) break;
+    if (lastTime > 0 && (micros() - lastTime > 50000) && pulseCount > 10) break;
+
+    // Timeout safety
+    if (millis() - startTime > 3000) break; // 3 seconds max record
     
     // Safety exit
-    if (digitalRead(PIN_SELECT) == HIGH) break;
+    if (digitalRead(PIN_SELECT) == HIGH) {
+        delay(200); // debounce
+        break;
+    }
+    yield();
   }
 
+  detachInterrupt(digitalPinToInterrupt(CC_GDO0));
   ELECHOUSE_cc1101.setSidle(); // Stop listening
   
   // --- PHASE 5: SAVE/DISCARD ---
+  if (pulseCount < 10) {
+    display.clearDisplay();
+    display.setCursor(0, 10); display.println("CAPTURE FAILED");
+    display.setCursor(0, 30); display.println("Signal too weak");
+    display.display();
+    delay(1500);
+    currentState = SUBGHZ_MENU;
+    return;
+  }
+
   display.clearDisplay();
   display.setCursor(0, 10); display.println("CAPTURE DONE");
   display.setCursor(0, 30); display.print("Pulses: "); display.println(pulseCount);
-  display.setCursor(0, 50); display.println("[SEL] OK");
+  display.setCursor(0, 50); display.println("[UP] Save [DWN] Del");
   display.display();
 
-  while(digitalRead(PIN_SELECT) == LOW); 
-  delay(300);
+  while(true) {
+    if (digitalRead(PIN_UP) == HIGH || v_up) {
+      v_up = false;
+
+      // Auto-generate name based on timestamp or count
+      String filename = "/subghz/sig_" + String(millis()) + ".txt";
+
+      // Save logic
+      if (!LittleFS.exists("/subghz")) {
+         LittleFS.mkdir("/subghz");
+      }
+      File file = LittleFS.open(filename, FILE_WRITE);
+      if (file) {
+        file.println(freqList[currentFreqIdx]);
+        file.println(modList[currentModIdx]);
+        file.println(pulseCount);
+        for (int i = 0; i < pulseCount; i++) {
+           file.println(pulseBuffer[i]);
+        }
+        file.close();
+
+        display.clearDisplay();
+        display.setCursor(0, 20); display.println("SAVED!");
+        display.setCursor(0, 40); display.println(filename);
+        display.display();
+      } else {
+        display.clearDisplay();
+        display.setCursor(0, 20); display.println("SAVE FAILED!");
+        display.display();
+      }
+      delay(1500);
+      break;
+    }
+    if (digitalRead(PIN_DOWN) == HIGH || v_down || digitalRead(PIN_SELECT) == HIGH || v_sel) {
+      v_down = false; v_sel = false;
+      display.clearDisplay();
+      display.setCursor(0, 20); display.println("DISCARDED");
+      display.display();
+      delay(1000);
+      break;
+    }
+  }
+
   currentState = SUBGHZ_MENU;
 }
 
@@ -233,19 +316,30 @@ void handleSubGhzPlay() {
   display.setCursor(0, 40); display.println("Sending Signal...");
   display.display();
 
-  // 1. Setup for Transmit
-  ELECHOUSE_cc1101.SetTx(); 
-  
-  // 2. DYNAMIC PIN SWITCH: Use GDO0 as Output
-  pinMode(CC_GDO0, OUTPUT); 
+  // 1. DYNAMIC PIN SWITCH: Use GDO0 as Output
+  pinMode(CC_GDO0, OUTPUT);
+  digitalWrite(CC_GDO0, LOW);
 
+  // 2. Setup for Transmit
+  // Need to make sure frequency and modulation are applied
+  ELECHOUSE_cc1101.setMHZ(freqList[currentFreqIdx]);
+  ELECHOUSE_cc1101.setModulation(modList[currentModIdx]);
+  ELECHOUSE_cc1101.SetTx(); 
+  delay(1); // Small delay to let TX state stabilize
+  
   // 3. Playback Loop
   // We assume the first pulse recorded was HIGH (because of our trigger)
-  bool signalState = HIGH; 
-  for (int i = 0; i < pulseCount; i++) {
-    digitalWrite(CC_GDO0, signalState); 
-    delayMicroseconds(pulseBuffer[i]);
-    signalState = !signalState; 
+
+  // Send the signal a few times (often required by receivers)
+  for (int repeat = 0; repeat < 5; repeat++) {
+    bool signalState = HIGH;
+    for (int i = 0; i < pulseCount; i++) {
+      digitalWrite(CC_GDO0, signalState);
+      delayMicroseconds(pulseBuffer[i]);
+      signalState = !signalState;
+    }
+    digitalWrite(CC_GDO0, LOW);
+    delay(10); // Inter-packet gap
   }
   
   // 4. Reset Pin
@@ -269,10 +363,11 @@ void drawSubGhzMenu() {
   const char* options[] = {
     "1. Freq Analyzer", 
     "2. Record Signal",
-    "3. Play Signal",
-    "4. Back"
+    "3. Saved Signals",
+    "4. Play Last",
+    "5. Back"
   };
-  int totalOpts = 4;
+  int totalOpts = 5;
 
   int startIdx = (menuIdx >= 4) ? menuIdx - 3 : 0;
   for (int i = 0; i < 4; i++) {
@@ -305,8 +400,12 @@ void drawSubGhzMenu() {
     
     if (menuIdx == 0)      currentState = SUBGHZ_SCAN;  
     else if (menuIdx == 1) currentState = SUBGHZ_RECORD;
-    else if (menuIdx == 2) currentState = SUBGHZ_PLAY;
-    else if (menuIdx == 3) { 
+    else if (menuIdx == 2) {
+      menuIdx = 0; // Reset list index
+      currentState = SUBGHZ_SAVED_LIST;
+    }
+    else if (menuIdx == 3) currentState = SUBGHZ_PLAY;
+    else if (menuIdx == 4) {
       // Power Down
       ELECHOUSE_cc1101.goSleep(); 
       subghzInit = false; // Reset global flag
@@ -314,8 +413,138 @@ void drawSubGhzMenu() {
     }
 
     while(digitalRead(PIN_SELECT) == HIGH);
-    menuIdx = 0; delay(300);
+    if(currentState != SUBGHZ_SAVED_LIST) menuIdx = 0;
+    delay(300);
   }
+}
+
+// --- SAVED SIGNALS MENU ---
+void handleSubGhzSavedList() {
+  File root = LittleFS.open("/subghz");
+  if (!root || !root.isDirectory()) {
+    display.clearDisplay();
+    display.setCursor(0, 20); display.println("No Saved Signals!");
+    display.display();
+    delay(1000);
+    currentState = SUBGHZ_MENU;
+    return;
+  }
+
+  // Count files to define array size
+  int fileCount = 0;
+  File file = root.openNextFile();
+  while (file) {
+    fileCount++;
+    file = root.openNextFile();
+  }
+
+  if (fileCount == 0) {
+    display.clearDisplay();
+    display.setCursor(0, 20); display.println("No Saved Signals!");
+    display.display();
+    delay(1000);
+    currentState = SUBGHZ_MENU;
+    return;
+  }
+
+  // Reload root to get names safely (no VLAs)
+  root = LittleFS.open("/subghz");
+  String* filenames = new String[fileCount];
+  int i = 0;
+  file = root.openNextFile();
+  while (file && i < fileCount) {
+    filenames[i] = String(file.name());
+    file = root.openNextFile();
+    i++;
+  }
+
+  display.clearDisplay();
+  display.setCursor(0, 0); display.println("--- SAVED SIGNALS ---");
+
+  // Back option is at index fileCount
+  int totalOpts = fileCount + 1;
+
+  int startIdx = (menuIdx >= 4) ? menuIdx - 3 : 0;
+  for (int j = 0; j < 4; j++) {
+    int cur = startIdx + j;
+    if (cur >= totalOpts) break;
+    int y = 15 + (j * 10);
+
+    if (cur == menuIdx) {
+      display.fillRect(0, y - 1, 128, 10, WHITE);
+      display.setTextColor(BLACK);
+    } else {
+      display.setTextColor(WHITE);
+    }
+
+    if (cur < fileCount) {
+      display.setCursor(5, y); display.println(filenames[cur]);
+    } else {
+      display.setCursor(5, y); display.println("< Back");
+    }
+  }
+  display.setTextColor(WHITE);
+  display.display();
+
+  if (digitalRead(PIN_DOWN) == HIGH || v_down) {
+    v_down = false; menuIdx = (menuIdx + 1) % totalOpts;
+    while(digitalRead(PIN_DOWN) == HIGH); delay(200);
+  }
+
+  if (digitalRead(PIN_UP) == HIGH || v_up) {
+    v_up = false; menuIdx = (menuIdx - 1 + totalOpts) % totalOpts;
+    while(digitalRead(PIN_UP) == HIGH); delay(200);
+  }
+
+  if (digitalRead(PIN_SELECT) == HIGH || v_sel) {
+    v_sel = false;
+
+    if (menuIdx == fileCount) {
+      // Go back
+      menuIdx = 0;
+      currentState = SUBGHZ_MENU;
+    } else {
+      // Load file and play
+      display.clearDisplay();
+      display.setCursor(0, 20); display.println("Loading...");
+      display.display();
+
+      String path = "/subghz/" + filenames[menuIdx];
+      File f = LittleFS.open(path, FILE_READ);
+      if (f) {
+        String fLine = f.readStringUntil('\n'); fLine.trim();
+        String mLine = f.readStringUntil('\n'); mLine.trim();
+        String cLine = f.readStringUntil('\n'); cLine.trim();
+
+        float loadedFreq = fLine.toFloat();
+        int loadedMod = mLine.toInt();
+        pulseCount = cLine.toInt();
+
+        for (int p = 0; p < pulseCount; p++) {
+          String pLine = f.readStringUntil('\n'); pLine.trim();
+          pulseBuffer[p] = pLine.toInt();
+        }
+        f.close();
+
+        // Find best freqIdx and modIdx to update UI
+        for (int k=0; k<4; k++) if(abs(freqList[k] - loadedFreq) < 0.1) currentFreqIdx = k;
+        for (int k=0; k<4; k++) if(modList[k] == loadedMod) currentModIdx = k;
+
+        // Go straight to play
+        menuIdx = 0;
+        currentState = SUBGHZ_PLAY;
+      } else {
+        display.clearDisplay();
+        display.setCursor(0, 20); display.println("Load Failed!");
+        display.display();
+        delay(1000);
+      }
+    }
+    while(digitalRead(PIN_SELECT) == HIGH); delay(300);
+  }
+
+  // Cleanup dynamically allocated array
+  delete[] filenames;
 }
 
 #endif
